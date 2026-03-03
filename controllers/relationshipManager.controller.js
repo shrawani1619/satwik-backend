@@ -69,17 +69,6 @@ export const createRelationshipManager = async (req, res, next) => {
         });
       }
     }
-    // Prevent assigning the same regional manager to multiple relationship managers
-    if (allowedRegionalManager) {
-      const alreadyAssigned = await RelationshipManager.findOne({ regionalManager: allowedRegionalManager });
-      if (alreadyAssigned) {
-        return res.status(400).json({
-          success: false,
-          message: 'Selected regional manager is already assigned to another relationship manager.',
-        });
-      }
-    }
-
     const rmPayload = {
       name: name.trim(),
       ownerName: ownerName.trim(),
@@ -241,19 +230,6 @@ export const updateRelationshipManager = async (req, res, next) => {
             message: 'Invalid regional manager.',
           });
         }
-      }
-    }
-    // Ensure the regional manager isn't already assigned to a different relationship manager
-    if (updatePayload.regionalManager) {
-      const existing = await RelationshipManager.findOne({
-        regionalManager: updatePayload.regionalManager,
-        _id: { $ne: req.params.id },
-      });
-      if (existing) {
-        return res.status(400).json({
-          success: false,
-          message: 'Selected regional manager is already assigned to another relationship manager.',
-        });
       }
     }
     const relationshipManager = await RelationshipManager.findByIdAndUpdate(req.params.id, updatePayload, {
