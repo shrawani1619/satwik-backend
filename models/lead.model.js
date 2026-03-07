@@ -81,6 +81,7 @@ const leadSchema = new mongoose.Schema(
       ref: 'Bank',
       index: true,
     },
+    bankName: { type: String },
 
     // Lead type: 'bank' = bank-specific form, 'new_lead' = generic lead (bank can be added later by RM)
     leadType: {

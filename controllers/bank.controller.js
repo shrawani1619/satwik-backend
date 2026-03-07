@@ -36,15 +36,10 @@ export const createBank = async (req, res, next) => {
     // #endregion
     
     // Validate required fields before creating
-    if (!req.body.name || !req.body.type || !req.body.contactEmail) {
-      console.error('❌ DEBUG: Missing required fields:', {
-        hasName: !!req.body.name,
-        hasType: !!req.body.type,
-        hasContactEmail: !!req.body.contactEmail
-      });
+    if (!req.body.name || !req.body.type) {
       return res.status(400).json({
         success: false,
-        error: `Missing required fields: ${!req.body.name ? 'name ' : ''}${!req.body.type ? 'type ' : ''}${!req.body.contactEmail ? 'contactEmail' : ''}`.trim(),
+        error: `Missing required fields: ${!req.body.name ? 'name ' : ''}${!req.body.type ? 'type' : ''}`.trim(),
       });
     }
     

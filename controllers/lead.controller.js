@@ -3,6 +3,7 @@ import Lead from '../models/lead.model.js';
 import LeadHistory from '../models/leadHistory.model.js';
 import User from '../models/user.model.js';
 import Staff from '../models/staff.model.js';
+import Bank from '../models/bank.model.js';
 import BankManager from '../models/bankManager.model.js';
 import RelationshipManager from '../models/relationship.model.js';
 import Franchise from '../models/franchise.model.js';
@@ -209,6 +210,17 @@ export const createLead = async (req, res, next) => {
     // Remove bankId if bank is set (to avoid confusion)
     if (leadData.bank) {
       delete leadData.bankId;
+    }
+    // Cast bank to ObjectId if it's a valid string (so populate works correctly)
+    if (leadData.bank && typeof leadData.bank === 'string' && mongoose.Types.ObjectId.isValid(leadData.bank)) {
+      leadData.bank = new mongoose.Types.ObjectId(leadData.bank);
+    }
+    // Denormalize bank name directly on the lead for reliable display
+    if (leadData.bank) {
+      try {
+        const bankDoc = await Bank.findById(leadData.bank).select('name');
+        if (bankDoc) leadData.bankName = bankDoc.name;
+      } catch (_) {}
     }
 
     // If client submitted a dynamic lead form payload, validate required fields/documents
@@ -813,6 +825,22 @@ export const updateLead = async (req, res, next) => {
 
     // Ensure agent ID is valid ObjectId format
     const updateData = { ...req.body };
+
+    // Cast bank to ObjectId if it's a valid string (so populate works correctly)
+    if (updateData.bank && typeof updateData.bank === 'string' && mongoose.Types.ObjectId.isValid(updateData.bank)) {
+      updateData.bank = new mongoose.Types.ObjectId(updateData.bank);
+    }
+    if (!updateData.bank && updateData.bankId && typeof updateData.bankId === 'string' && mongoose.Types.ObjectId.isValid(updateData.bankId)) {
+      updateData.bank = new mongoose.Types.ObjectId(updateData.bankId);
+    }
+    if (updateData.bankId) delete updateData.bankId;
+    // Denormalize bank name directly on the lead for reliable display
+    if (updateData.bank) {
+      try {
+        const bankDoc = await Bank.findById(updateData.bank).select('name');
+        if (bankDoc) updateData.bankName = bankDoc.name;
+      } catch (_) {}
+    }
 
     // Only Relationship Manager, Accountant, and Franchise can set commission percentage and amount
     if (updateData.commissionPercentage !== undefined || updateData.commissionAmount !== undefined) {
@@ -1861,12 +1889,12 @@ export const getDisbursementEmailPreview = async (req, res, next) => {
       });
     }
 
-    // Get bank email (TO field)
-    const bankEmail = lead.bank?.contactEmail || '';
-    if (!bankEmail) {
+    // Get SM/BM email (TO field)
+    const smBmEmail = lead.smBm?.email || '';
+    if (!smBmEmail) {
       return res.status(400).json({
         success: false,
-        error: 'Bank email not found. Please ensure the bank has a contact email.',
+        error: 'SM/BM email not found. Please ensure the SM/BM assigned to this lead has an email.',
       });
     }
 
@@ -2055,7 +2083,7 @@ export const getDisbursementEmailPreview = async (req, res, next) => {
         </tr>
         <tr>
           <td style="padding: 8px; border: 1px solid #000; width: 40%;">Reporting Manager Name & Mobile Number</td>
-          <td style="padding: 8px; border: 1px solid #000; width: 60%;">${formatValue(lead.smBm?.name || lead.smBmName || '-')} ${formatValue(lead.smBm?.mobile || lead.smBmMobile || '')}</td>
+          <td style="padding: 8px; border: 1px solid #000; width: 60%;">${formatValue(currentUser.name)} ${formatValue(currentUserMobile)}</td>
         </tr>
       </table>
     `;
@@ -2096,13 +2124,13 @@ export const getDisbursementEmailPreview = async (req, res, next) => {
       { key: 'codeConfirmation', label: 'Code Confirmation', value: formatValue(lead.dsaCode || lead.codeUse || lead.formValues?.codeConfirmation || '-'), highlighted: false },
       { key: 'subvention', label: 'Subvention (If Any)', value: formatValue(lead.formValues?.subvention || '-'), highlighted: true },
       { key: 'disbursementDate', label: 'Disbursement Date', value: formatDate(lead.disbursementDate), highlighted: false },
-      { key: 'reportingManager', label: 'Reporting Manager Name & Mobile Number', value: `${formatValue(lead.smBm?.name || lead.smBmName || '-')} ${formatValue(lead.smBm?.mobile || lead.smBmMobile || '')}`, highlighted: false },
+      { key: 'reportingManager', label: 'Reporting Manager Name & Mobile Number', value: `${formatValue(currentUser.name)} ${formatValue(currentUserMobile)}`.trim(), highlighted: false },
     ];
 
     res.status(200).json({
       success: true,
       data: {
-        to: bankEmail,
+        to: smBmEmail,
         from: fromEmail,
         date: formattedDate,
         cc: ccEmails,

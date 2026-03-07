@@ -9,7 +9,7 @@ import { v2 as cloudinary } from 'cloudinary';
 import path from 'path';
 import fs from 'fs';
 import https from 'https';
-
+import AdmZip from 'adm-zip';
 /**
  * Authorization helper - determines if a user can view documents for an entity
  */
@@ -322,92 +322,130 @@ export const downloadDocument = async (req, res, next) => {
         message: 'Document not found',
       });
     }
-    // PDFs: stream inline so the browser can render them instead of forcing download
-    if (document.mimeType === 'application/pdf') {
-      const filename = document.originalFileName || 'document.pdf';
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader(
-        'Content-Disposition',
-        `inline; filename="${encodeURIComponent(filename)}"`
-      );
 
-      if (document.provider === 'cloudinary' && document.url) {
-        // Stream from Cloudinary to client
-        return https
-          .get(document.url, (cloudRes) => {
-            if (cloudRes.statusCode && cloudRes.statusCode >= 400) {
-              return res.status(500).json({
-                success: false,
-                message: 'Error fetching PDF from storage',
-              });
-            }
-            cloudRes.pipe(res);
-          })
-          .on('error', () =>
-            res.status(500).json({
-              success: false,
-              message: 'Error fetching PDF from storage',
-            })
-          );
-      }
+    // Resolve the actual cloud URL — some older records have provider='local'
+    // but filePath is a Cloudinary HTTPS URL. Normalise both cases.
+    const cloudUrl =
+      document.url ||
+      (document.filePath?.startsWith('https://') || document.filePath?.startsWith('http://')
+        ? document.filePath
+        : null);
 
-      // Local PDF file
-      const filePath = document.filePath;
-      if (!filePath || filePath.startsWith('http://') || filePath.startsWith('https://')) {
-        return res.status(500).json({
-          success: false,
-          message: 'File not available for download',
-        });
-      }
-      const stream = fs.createReadStream(filePath);
-      stream.on('error', () =>
-        res.status(500).json({
-          success: false,
-          message: 'Error reading PDF from disk',
-        })
-      );
-      return stream.pipe(res);
-    }
+    const isCloudinary =
+      document.provider === 'cloudinary' ||
+      cloudUrl?.includes('cloudinary.com') ||
+      cloudUrl?.includes('res.cloudinary');
 
-    // Non-PDFs
-    if (document.provider === 'cloudinary' && document.publicId) {
+    // --- Cloud-stored document: download via Cloudinary generate_archive, unzip, stream ---
+    // Cloudinary blocks public delivery of PDFs on free accounts (401).
+    // generate_archive is the only authenticated download endpoint that works.
+    // We buffer the ZIP response, extract the single file, and stream it to the client.
+    if (isCloudinary && cloudUrl) {
       const { CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET } = process.env;
-      if (CLOUDINARY_CLOUD_NAME && CLOUDINARY_API_KEY && CLOUDINARY_API_SECRET) {
-        cloudinary.config({
-          cloud_name: CLOUDINARY_CLOUD_NAME,
-          api_key: CLOUDINARY_API_KEY,
-          api_secret: CLOUDINARY_API_SECRET,
-        });
-        const resourceType = document.resourceType || 'image';
-        const signedUrl = cloudinary.url(document.publicId, {
-          sign_url: true,
-          resource_type: resourceType,
-          secure: true,
-        });
-        return res.redirect(302, signedUrl);
+
+      if (!CLOUDINARY_CLOUD_NAME || !CLOUDINARY_API_KEY || !CLOUDINARY_API_SECRET) {
+        return res.status(500).json({ success: false, message: 'Storage configuration missing' });
       }
-      if (document.url) {
-        return res.redirect(302, document.url);
+
+      cloudinary.config({
+        cloud_name: CLOUDINARY_CLOUD_NAME,
+        api_key: CLOUDINARY_API_KEY,
+        api_secret: CLOUDINARY_API_SECRET,
+      });
+
+      // Extract public_id from stored record or parse from URL
+      const publicId = document.publicId || (() => {
+        const match = cloudUrl.match(/\/upload\/(?:v\d+\/)?(.+?)(?:\.[^/.]+)?$/);
+        return match ? match[1] : null;
+      })();
+
+      const resourceType = document.resourceType ||
+        (document.mimeType?.startsWith('image/') ? 'image' : 'raw');
+
+      if (!publicId) {
+        console.error(`Cannot determine public_id for document ${document._id}`);
+        return res.status(500).json({ success: false, message: 'Cannot locate file in storage' });
       }
+
+      // Build signed archive download URL (the only Cloudinary endpoint that bypasses PDF restriction)
+      const archiveUrl = cloudinary.utils.download_archive_url({
+        public_ids: [publicId],
+        resource_type: resourceType,
+        flatten_folders: true,
+        use_original_filename: false,
+      });
+
+      const mimeType = document.mimeType || 'application/octet-stream';
+      const filename = document.originalFileName || document.fileName || 'file';
+
+      console.log(`Downloading Cloudinary archive for: ${publicId} (${resourceType})`);
+
+      // Buffer the entire ZIP response, then extract and stream the file
+      return https.get(archiveUrl, (archiveRes) => {
+        if (archiveRes.statusCode >= 400) {
+          console.error(`Cloudinary archive download failed (${archiveRes.statusCode})`);
+          return res.status(502).json({ success: false, message: 'Could not fetch file from storage' });
+        }
+
+        const chunks = [];
+        archiveRes.on('data', chunk => chunks.push(chunk));
+        archiveRes.on('end', () => {
+          try {
+            const zipBuffer = Buffer.concat(chunks);
+            const zip = new AdmZip(zipBuffer);
+            const entries = zip.getEntries();
+
+            if (!entries.length) {
+              return res.status(502).json({ success: false, message: 'Archive from storage was empty' });
+            }
+
+            // Get the first (only) file in the archive
+            const fileBuffer = entries[0].getData();
+
+            res.setHeader('Content-Type', mimeType);
+            res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(filename)}"`);
+            res.setHeader('Content-Length', fileBuffer.length);
+            res.end(fileBuffer);
+          } catch (zipErr) {
+            console.error(`ZIP extraction error: ${zipErr.message}`);
+            res.status(502).json({ success: false, message: 'Failed to extract file from storage archive' });
+          }
+        });
+        archiveRes.on('error', (err) => {
+          console.error(`Archive stream error: ${err.message}`);
+          res.status(502).json({ success: false, message: 'Could not read file from storage' });
+        });
+      }).on('error', (err) => {
+        console.error(`Cloudinary archive request error: ${err.message}`);
+        res.status(502).json({ success: false, message: 'Could not reach storage service' });
+      });
     }
 
-    // Local non-PDF: default to download
+    // --- Local file ---
     const filePath = document.filePath;
     if (!filePath || filePath.startsWith('http://') || filePath.startsWith('https://')) {
+      console.error(`Document ${document._id} has no valid local file path: ${filePath}`);
       return res.status(500).json({
         success: false,
         message: 'File not available for download',
       });
     }
-    const filename = document.originalFileName || path.basename(filePath);
-    res.download(filePath, filename, (err) => {
-      if (err) {
-        return res.status(500).json({
-          success: false,
-          message: 'Error downloading file',
-        });
-      }
+
+    if (!fs.existsSync(filePath)) {
+      console.error(`Local file not found on disk: ${filePath}`);
+      return res.status(500).json({
+        success: false,
+        message: 'File not found on server',
+      });
+    }
+
+    const stream = fs.createReadStream(filePath);
+    stream.on('error', (err) => {
+      console.error(`Error reading local file: ${err.message}`);
+      res.status(500).json({ success: false, message: 'Error reading file from disk' });
     });
+    return stream.pipe(res);
+
   } catch (error) {
     next(error);
   }

@@ -1,4 +1,5 @@
 import Lead from '../models/lead.model.js';
+import Bank from '../models/bank.model.js';
 import { getAccountantAccessibleAgentIds } from '../utils/accountantScope.js';
 
 // Status mapping for consistent handling across the application

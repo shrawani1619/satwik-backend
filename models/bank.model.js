@@ -22,7 +22,6 @@ const bankSchema = new mongoose.Schema(
     // Contact details
     contactEmail: {
       type: String,
-      required: true,
       lowercase: true,
     },
 
@@ -68,6 +67,13 @@ const bankSchema = new mongoose.Schema(
     },
     accountNumber: String,
     registrationNumber: String, // For NBFCs
+
+    // Loan types supported by this bank
+    loanTypes: {
+      type: [String],
+      enum: ['personal_loan', 'home_loan', 'business_loan', 'loan_against_property', 'education_loan', 'car_loan', 'gold_loan'],
+      default: [],
+    },
 
     // Default commission basis for this bank
     commissionBasis: {

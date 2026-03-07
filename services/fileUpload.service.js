@@ -106,12 +106,10 @@ class FileUploadService {
           api_secret: CLOUDINARY_API_SECRET,
         });
 
-        // Choose appropriate Cloudinary resource type based on mime type.
-        // PDFs and other non-image docs should use 'raw' so they can be viewed/downloaded correctly.
-        let resourceType = 'auto';
-        if (file.mimetype === 'application/pdf') {
-          resourceType = 'raw';
-        }
+        // Images use 'image', everything else (PDF, doc, xls…) uses 'raw' so Cloudinary
+        // stores the original file bytes. Opening is handled by Google Docs Viewer on the frontend.
+        const isImage = file.mimetype?.startsWith('image/');
+        const resourceType = isImage ? 'image' : 'raw';
 
         // upload buffer via upload_stream using streamifier for reliability
         uploadResult = await new Promise((resolve, reject) => {

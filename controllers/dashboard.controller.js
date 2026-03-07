@@ -2,6 +2,7 @@ import Lead from '../models/lead.model.js';
 import Invoice from '../models/invoice.model.js';
 import Payout from '../models/payout.model.js';
 import User from '../models/user.model.js';
+import Bank from '../models/bank.model.js';
 import Franchise from '../models/franchise.model.js';
 import EmailLog from '../models/emailLog.model.js';
 import mongoose from 'mongoose';

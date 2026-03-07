@@ -9,11 +9,13 @@ export const authenticate = async (req, res, next) => {
   try {
     let token;
 
-    // Get token from cookies (preferred) or Authorization header
+    // Get token from cookies, Authorization header, or query param (for file downloads via window.open)
     if (req.cookies && req.cookies.token) {
       token = req.cookies.token;
     } else if (req.headers.authorization?.startsWith('Bearer ')) {
       token = req.headers.authorization.split(' ')[1];
+    } else if (req.query?.token) {
+      token = req.query.token;
     }
 
     // Make sure token exists
