@@ -16,6 +16,12 @@ if (!process.env.DB_URI) {
 // Use MONGODB_URI if DB_URI is not set (for backward compatibility)
 const DB_URI_FINAL = process.env.DB_URI
 
+/** Comma- or space-separated list (no trailing slashes). Merged with defaults in app.js. */
+export const CORS_ORIGINS = (process.env.CORS_ORIGINS || "")
+  .split(/[,\s]+/)
+  .map((s) => s.trim().replace(/\/+$/, ""))
+  .filter(Boolean);
+
 export const { 
   PORT, 
   JWT_SECRET, 

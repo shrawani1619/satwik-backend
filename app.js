@@ -2,7 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import errorHandler from './middlewares/error.middleware.js';
-import { PORT } from './config/env.js';
+import { PORT, CORS_ORIGINS } from './config/env.js';
 import authRouter from './routes/auth.route.js';
 import leadRouter from './routes/lead.route.js';
 import invoiceRouter from './routes/invoice.route.js';
@@ -38,13 +38,15 @@ import { v2 as cloudinary } from 'cloudinary';
 
 const app = express();
 
-// Middleware
-const allowedOrigins = new Set([
+// Middleware — base list + CORS_ORIGINS from env (Render/Vercel: set CORS_ORIGINS there)
+const DEFAULT_CORS_ORIGINS = [
   'http://localhost:5173',
   'https://ykcfinserv.com',
   'https://www.ykcfinserv.com',
   'https://ykc-finserv.vercel.app',
-]);
+  'https://satwik-frontend.vercel.app',
+];
+const allowedOrigins = new Set([...DEFAULT_CORS_ORIGINS, ...CORS_ORIGINS]);
 
 app.use(
   cors({
