@@ -1,6 +1,18 @@
 import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
 
+const formatGst = (value) =>
+  String(value ?? '')
+    .replace(/[^a-zA-Z0-9]/g, '')
+    .toUpperCase()
+    .slice(0, 15);
+
+const isValidGst = (gst) => {
+  const formatted = formatGst(gst);
+  if (!formatted) return false;
+  return /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]{1}$/.test(formatted);
+};
+
 const agentSchema = new mongoose.Schema(
   {
     name: {
@@ -59,7 +71,16 @@ const agentSchema = new mongoose.Schema(
     kyc: {
       pan: String,
       aadhaar: String,
-      gst: String,
+      gst: {
+        type: String,
+        validate: {
+          validator: function (v) {
+            if (v == null || String(v).trim() === '') return true; // allow empty
+            return isValidGst(v);
+          },
+          message: 'Invalid GST number',
+        },
+      },
       verified: {
         type: Boolean,
         default: false,

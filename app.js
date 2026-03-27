@@ -39,17 +39,30 @@ import { v2 as cloudinary } from 'cloudinary';
 const app = express();
 
 // Middleware
-app.use(cors({
-  origin: [
-    "http://localhost:5173",
-    "https://ykcfinserv.com",
-    "https://www.ykcfinserv.com",
-    "https://ykc-finserv.vercel.app"
-  ],
-  credentials: true,
-  methods: ["GET","POST","PUT","DELETE","PATCH","OPTIONS"],
-  allowedHeaders: ["Content-Type","Authorization"]
-}));
+const allowedOrigins = new Set([
+  'http://localhost:5173',
+  'https://ykcfinserv.com',
+  'https://www.ykcfinserv.com',
+  'https://ykc-finserv.vercel.app',
+]);
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // Allow non-browser requests (like curl/Postman) where Origin is missing
+      if (!origin) return callback(null, true);
+
+      const isLocalhost =
+        /^http:\/\/localhost:\d+$/.test(origin) || /^http:\/\/127\.0\.0\.1:\d+$/.test(origin);
+
+      if (isLocalhost || allowedOrigins.has(origin)) return callback(null, true);
+      return callback(new Error(`CORS blocked origin: ${origin}`));
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+  })
+);
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
@@ -58,7 +71,7 @@ app.use(cookieParser());
 app.get('/', (req, res) => {
   res.status(200).json({
     success: true,
-    message: 'YKC FinServ API Server is running',
+    message: 'Satwik Network API Server is running',
     version: '1.0.0',
     endpoints: {
       health: '/health',

@@ -9,6 +9,7 @@ import RelationshipManager from '../models/relationship.model.js';
 import Franchise from '../models/franchise.model.js';
 import commissionService from '../services/commission.service.js';
 import invoiceService from '../services/invoice.service.js';
+import whatsappService from '../services/whatsapp.service.js';
 import emailService from '../services/email.service.js';
 import auditService from '../services/audit.service.js';
 import { getPaginationMeta, trackLeadChanges } from '../utils/helpers.js';
@@ -928,6 +929,19 @@ export const updateLead = async (req, res, next) => {
       });
     }
 
+    // Logged is only the initial status at creation; do not allow reverting to it after progression.
+    if (
+      updateData.status !== undefined &&
+      updateData.status === 'logged' &&
+      existingLead.status !== 'logged'
+    ) {
+      return res.status(400).json({
+        success: false,
+        error:
+          'Logged status applies only to new applications. Choose another status once the lead has progressed.',
+      });
+    }
+
     const lead = await Lead.findByIdAndUpdate(req.params.id, updateData, {
       new: true,
       runValidators: true,
@@ -939,6 +953,43 @@ export const updateLead = async (req, res, next) => {
       .populate('bank', 'name type')
       .populate('verifiedBy', 'name email')
       .populate('smBm', 'name email mobile');
+
+    // Fire-and-forget WhatsApp notification when status changes via full lead update endpoint
+    try {
+      const oldStatus = existingLead.status;
+      const newStatus = lead?.status;
+      if (oldStatus !== newStatus) {
+        let shouldSendWhatsapp = true;
+        // Only send "logged" message once per lead.
+        if (newStatus === 'logged') {
+          const markResult = await Lead.updateOne(
+            { _id: lead._id, whatsappLoggedStatusSent: { $ne: true } },
+            { $set: { whatsappLoggedStatusSent: true } }
+          );
+          if (markResult.modifiedCount === 0) {
+            // Already sent to customer for this lead's "logged" status.
+            shouldSendWhatsapp = false;
+          }
+        }
+
+        if (shouldSendWhatsapp) {
+          console.log(`📨 WhatsApp queued (updateLead): ${oldStatus} -> ${newStatus} for lead ${lead?._id}`);
+          if (newStatus === 'logged') {
+            const whatsappResult = await whatsappService.sendLeadStatusUpdate(lead._id, oldStatus, newStatus);
+            if (!whatsappResult) {
+              // Allow retry if WhatsApp send failed.
+              await Lead.updateOne({ _id: lead._id }, { $set: { whatsappLoggedStatusSent: false } });
+            }
+          } else {
+            whatsappService
+              .sendLeadStatusUpdate(lead._id, oldStatus, newStatus)
+              .catch((err) => console.error('WhatsApp sendLeadStatusUpdate error (updateLead):', err));
+          }
+        }
+      }
+    } catch (notifyErr) {
+      console.error('Error scheduling WhatsApp notification (updateLead):', notifyErr);
+    }
 
     // Track changes - only check fields that were actually updated
     const fieldsToCheck = Object.keys(updateData);
@@ -1100,6 +1151,15 @@ export const updateLeadStatus = async (req, res, next) => {
       }
     }
 
+    // Logged is only the initial status at creation; do not allow reverting to it after progression.
+    if (status === 'logged' && existingLead.status !== 'logged') {
+      return res.status(400).json({
+        success: false,
+        error:
+          'Logged status applies only to new applications. Choose another status once the lead has progressed.',
+      });
+    }
+
     const updateData = { status };
 
     if (sanctionedDate !== undefined) {
@@ -1173,6 +1233,43 @@ export const updateLeadStatus = async (req, res, next) => {
         changes,
         remarks: req.body.remarks || null,
       });
+    }
+
+    // Fire-and-forget WhatsApp notification to the lead on any status change
+    try {
+      const oldStatus = existingLead.status;
+      const newStatus = lead.status;
+      if (oldStatus !== newStatus) {
+        let shouldSendWhatsapp = true;
+        // Only send "logged" message once per lead.
+        if (newStatus === 'logged') {
+          const markResult = await Lead.updateOne(
+            { _id: lead._id, whatsappLoggedStatusSent: { $ne: true } },
+            { $set: { whatsappLoggedStatusSent: true } }
+          );
+          if (markResult.modifiedCount === 0) {
+            // Already sent to customer for this lead's "logged" status.
+            shouldSendWhatsapp = false;
+          }
+        }
+
+        if (shouldSendWhatsapp) {
+          if (newStatus === 'logged') {
+            const whatsappResult = await whatsappService.sendLeadStatusUpdate(lead._id, oldStatus, newStatus);
+            if (!whatsappResult) {
+              // Allow retry if WhatsApp send failed.
+              await Lead.updateOne({ _id: lead._id }, { $set: { whatsappLoggedStatusSent: false } });
+            }
+          } else {
+            // Do not await - we don't want to slow down API response if WhatsApp is slow
+            whatsappService
+              .sendLeadStatusUpdate(lead._id, oldStatus, newStatus)
+              .catch((err) => console.error('WhatsApp sendLeadStatusUpdate error:', err));
+          }
+        }
+      }
+    } catch (notifyErr) {
+      console.error('Error scheduling WhatsApp notification:', notifyErr);
     }
 
     res.status(200).json({
@@ -1863,11 +1960,11 @@ export const getDisbursementEmailPreview = async (req, res, next) => {
       });
     }
 
-    // Check if lead status is disbursed
-    if (lead.status !== 'disbursed') {
+    // Check if lead status is eligible for disbursement confirmation email
+    if (lead.status !== 'disbursed' && lead.status !== 'partial_disbursed') {
       return res.status(400).json({
         success: false,
-        error: 'Lead status must be "disbursed" to send disbursement confirmation email',
+        error: 'Lead status must be "disbursed" or "partial_disbursed" to send disbursement confirmation email',
       });
     }
 
@@ -2083,7 +2180,7 @@ export const getDisbursementEmailPreview = async (req, res, next) => {
           <p style="margin-top: 20px;">Regards,<br>
           ${currentUser.name}<br>
           ${currentUserMobile}<br>
-          YKC FINSERV PVT LTD</p>
+          Satwik Network</p>
         </body>
       </html>
     `;
@@ -2187,10 +2284,10 @@ export const sendDisbursementEmail = async (req, res, next) => {
       });
     }
 
-    if (lead.status !== 'disbursed') {
+    if (lead.status !== 'disbursed' && lead.status !== 'partial_disbursed') {
       return res.status(400).json({
         success: false,
-        error: 'Lead status must be "disbursed" to send disbursement confirmation email',
+        error: 'Lead status must be "disbursed" or "partial_disbursed" to send disbursement confirmation email',
       });
     }
 

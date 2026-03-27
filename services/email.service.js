@@ -106,7 +106,7 @@ class EmailService {
               <li><strong>Agent:</strong> ${leadData.agent?.name || 'N/A'}</li>
             </ul>
             <p>Please process this case and update the status in the system.</p>
-            <p>Best regards,<br>YKC Financial Services</p>
+            <p>Best regards,<br>Satwik Network</p>
           </body>
         </html>
       `;
@@ -139,7 +139,7 @@ class EmailService {
           <body>
             <h2>${subject}</h2>
             <p>${message}</p>
-            <p>Best regards,<br>YKC Financial Services</p>
+            <p>Best regards,<br>Satwik Network</p>
           </body>
         </html>
       `;

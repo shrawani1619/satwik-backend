@@ -223,6 +223,13 @@ const leadSchema = new mongoose.Schema(
     // Additional details
     remarks: String,
 
+    // WhatsApp tracking: ensure customer receives the "logged" status message only once.
+    whatsappLoggedStatusSent: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+
     // Bank coordination
     sentToBankAt: Date,
     bankResponseReceivedAt: Date,

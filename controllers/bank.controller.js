@@ -12,7 +12,7 @@ const __dirname = path.dirname(__filename);
 export const createBank = async (req, res, next) => {
   try {
     // #region agent log
-    const logPath = 'c:\\Users\\UNIQUE\\Desktop\\YKC\\.cursor\\debug.log';
+    const logPath = 'c:\\Users\\UNIQUE\\Desktop\\Satwik-network\\.cursor\\debug.log';
     const logData = { location: 'bank.controller.js:13', message: 'Creating bank - received data', data: req.body, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'A' };
     console.log('🔍 DEBUG: Received bank data:', JSON.stringify(req.body, null, 2));
     console.log('🔍 DEBUG: Field check:', {
@@ -61,7 +61,7 @@ export const createBank = async (req, res, next) => {
     });
   } catch (error) {
     // #region agent log
-    const logPath = 'c:\\Users\\UNIQUE\\Desktop\\YKC\\.cursor\\debug.log';
+    const logPath = 'c:\\Users\\UNIQUE\\Desktop\\Satwik-network\\.cursor\\debug.log';
     const logData3 = { location: 'bank.controller.js:35', message: 'Error creating bank', data: { error: error.message, receivedData: req.body }, timestamp: Date.now(), sessionId: 'debug-session', runId: 'run1', hypothesisId: 'A' };
     console.error('❌ DEBUG: Error creating bank:', error.message);
     console.error('❌ DEBUG: Received data:', JSON.stringify(req.body, null, 2));
