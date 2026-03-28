@@ -14,7 +14,21 @@ import { getRegionalManagerFranchiseIds, regionalManagerCanAccessFranchise } fro
  */
 export const createFranchise = async (req, res, next) => {
   try {
-    const { name, ownerName, email, mobile, password, address, status, commissionStructure, commissionPercentage, regionalManager, franchiseType } = req.body;
+    const {
+      name,
+      ownerName,
+      email,
+      mobile,
+      password,
+      address,
+      status,
+      commissionStructure,
+      commissionPercentage,
+      regionalManager,
+      franchiseType,
+      kyc,
+      bankDetails,
+    } = req.body;
 
     if (!name?.trim()) {
       return res.status(400).json({
@@ -22,6 +36,9 @@ export const createFranchise = async (req, res, next) => {
         message: 'Franchise name is required',
       });
     }
+
+    const resolvedOwnerName =
+      (ownerName && String(ownerName).trim()) || (name && String(name).trim()) || '';
 
     if (!email?.trim()) {
       return res.status(400).json({
@@ -92,7 +109,7 @@ export const createFranchise = async (req, res, next) => {
 
     const franchisePayload = {
       name: name.trim(),
-      ownerName: ownerName.trim(),
+      ownerName: resolvedOwnerName,
       email: email.toLowerCase().trim(),
       mobile: mobile.trim(),
       status: status || 'active',
@@ -103,27 +120,45 @@ export const createFranchise = async (req, res, next) => {
         ? { commissionPercentage: parseFloat(commissionPercentage) } 
         : {}),
       ...(allowedRegionalManager && { regionalManager: allowedRegionalManager }),
+      ...(kyc && typeof kyc === 'object' ? { kyc } : {}),
+      ...(bankDetails && typeof bankDetails === 'object' ? { bankDetails } : {}),
     };
     if (req.user.role === 'regional_manager') {
       franchisePayload.regionalManager = req.user._id;
     }
     // relationship managers are not directly linked to franchises per new hierarchy
-    const franchise = await Franchise.create(franchisePayload);
+    let franchise = null;
+    let ownerUser = null;
+    try {
+      franchise = await Franchise.create(franchisePayload);
 
-    const hashedPassword = await bcrypt.hash(password, 10);
-    const ownerUser = await User.create({
-      name: ownerName.trim(),
-      email: franchise.email,
-      mobile: franchise.mobile,
-      password: hashedPassword,
-      role: 'franchise',
-      franchise: franchise._id,
-      franchiseOwned: franchise._id,
-      status: 'active',
-    });
+      const hashedPassword = await bcrypt.hash(password, 10);
+      ownerUser = await User.create({
+        name: resolvedOwnerName,
+        email: franchise.email,
+        mobile: franchise.mobile,
+        password: hashedPassword,
+        role: 'franchise',
+        franchise: franchise._id,
+        franchiseOwned: franchise._id,
+        status: 'active',
+      });
 
-    franchise.owner = ownerUser._id;
-    await franchise.save();
+      franchise.owner = ownerUser._id;
+      await franchise.save();
+    } catch (createErr) {
+      try {
+        if (ownerUser?._id) await User.deleteOne({ _id: ownerUser._id });
+      } catch (_) {
+        /* ignore */
+      }
+      try {
+        if (franchise?._id) await Franchise.deleteOne({ _id: franchise._id });
+      } catch (_) {
+        /* ignore */
+      }
+      throw createErr;
+    }
 
     const populatedFranchise = await Franchise.findById(franchise._id)
       .populate('owner', 'name email')

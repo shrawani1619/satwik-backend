@@ -1,5 +1,7 @@
 import jwt from 'jsonwebtoken';
+import bcrypt from 'bcryptjs';
 import User from '../models/user.model.js';
+import Franchise from '../models/franchise.model.js';
 import { JWT_SECRET, JWT_EXPIRE } from '../config/env.js';
 
 /**
@@ -113,6 +115,110 @@ export const login = async (req, res, next) => {
       } catch (migrationError) {
         console.error('Migration error:', migrationError);
         // Continue with normal flow
+      }
+    }
+
+    // Staff collection (legacy) — same email/password does not exist on User until migrated
+    if (!user) {
+      try {
+        const Staff = (await import('../models/staff.model.js')).default;
+        const staffMember = await Staff.findOne({ email: normalizedEmail }).select('+password');
+
+        if (staffMember) {
+          const staffPasswordOk = await staffMember.comparePassword(password);
+          if (!staffPasswordOk) {
+            return res.status(401).json({
+              success: false,
+              message: 'Invalid credentials',
+            });
+          }
+
+          if (staffMember.status !== 'active') {
+            return res.status(403).json({
+              success: false,
+              message: `Account is ${staffMember.status}. Please contact administrator to activate your account.`,
+            });
+          }
+
+          const staffRoleToUser = {
+            admin: 'super_admin',
+            regional_manager: 'regional_manager',
+            accounts: 'accounts_manager',
+            staff: 'accounts_manager',
+          };
+          const mappedRole = staffRoleToUser[staffMember.role] || 'accounts_manager';
+
+          const digits = String(staffMember.mobile || staffMember.phone || '')
+            .replace(/\D/g, '')
+            .slice(-10);
+          let mobile =
+            /^[6-9]\d{9}$/.test(digits) && !(await User.findOne({ mobile: digits }))
+              ? digits
+              : null;
+
+          for (let attempt = 0; attempt < 50 && !mobile; attempt += 1) {
+            const candidate = `8${String(Math.floor(Math.random() * 1e9)).padStart(9, '0')}`;
+            if (/^[6-9]\d{9}$/.test(candidate) && !(await User.findOne({ mobile: candidate }))) {
+              mobile = candidate;
+            }
+          }
+
+          if (!mobile) {
+            console.error('Staff migration: could not allocate unique mobile');
+            return res.status(500).json({
+              success: false,
+              message: 'Login migration failed. Contact support.',
+            });
+          }
+
+          user = await User.create({
+            name: staffMember.name,
+            email: staffMember.email,
+            mobile,
+            password: staffMember.password,
+            role: mappedRole,
+            status: 'active',
+            lastLoginAt: new Date(),
+          });
+
+          console.log('✅ Staff account migrated to User model');
+        }
+      } catch (staffMigrationError) {
+        console.error('Staff migration error:', staffMigrationError);
+      }
+    }
+
+    // Franchise row exists but no owner User (failed mid-create) or stale owner ref — link owner using this login password
+    if (!user) {
+      try {
+        const franchiseDoc = await Franchise.findOne({ email: normalizedEmail });
+        if (franchiseDoc && password && String(password).length >= 6) {
+          const ownerId = franchiseDoc.owner;
+          const ownerStillThere = ownerId && (await User.exists({ _id: ownerId }));
+          if (!ownerStillThere) {
+            const hashedPassword = await bcrypt.hash(String(password), 10);
+            const ownerLabel =
+              (franchiseDoc.ownerName && String(franchiseDoc.ownerName).trim()) ||
+              (franchiseDoc.name && String(franchiseDoc.name).trim()) ||
+              'Owner';
+            const newOwner = await User.create({
+              name: ownerLabel,
+              email: franchiseDoc.email,
+              mobile: franchiseDoc.mobile,
+              password: hashedPassword,
+              role: 'franchise',
+              franchise: franchiseDoc._id,
+              franchiseOwned: franchiseDoc._id,
+              status: 'active',
+            });
+            franchiseDoc.owner = newOwner._id;
+            await franchiseDoc.save();
+            user = await User.findById(newOwner._id).select('+password');
+            console.log('✅ Linked franchise owner account for:', normalizedEmail);
+          }
+        }
+      } catch (franchiseLinkError) {
+        console.error('Franchise owner link error:', franchiseLinkError);
       }
     }
 
